@@ -1,0 +1,8 @@
+{
+    "FileName": "__script_info__.json",
+    "Framework": "tensorflow",
+    "ModelId": "none",
+    "Scope": "inference",
+    "Task": "od1",
+    "Version": "1.0.1"
+}
