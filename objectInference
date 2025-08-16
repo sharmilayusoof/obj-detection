@@ -1,0 +1,80 @@
+import boto3
+import numpy as np
+from IPython.core.display import HTML
+from PIL import Image
+from PIL import ImageColor
+from matplotlib import pyplot as plt
+import matplotlib.patches as patches
+import json
+
+# --- Configuration ---
+region = "us-east-1"
+endpoint_name = "jumpstart-dft-ssd-resnet50-v1-fpn-6-20250814-103514"
+bucket = "mini-cooper-dev"
+key = "images/Cruise Control/0c96116fa60543c59c3bc9100ca9ef48_image.jpg"
+local_img_filename = "0c96116fa60543c59c3bc9100ca9ef48_image.jpg"
+
+# --- Download image from S3 ---
+s3 = boto3.client("s3", region_name=region)
+s3.download_file(Bucket=bucket, Key=key, Filename=local_img_filename)
+
+# --- Display the image ---
+HTML(f'''
+<img src="{local_img_filename}" alt="Input Image" style="height: 600px;"/>
+<figcaption>{local_img_filename}</figcaption>
+''')
+
+# --- Function to call SageMaker endpoint ---
+def query_endpoint(input_img_bytes):
+    client = boto3.client('sagemaker-runtime', region_name=region)
+    response = client.invoke_endpoint(
+        EndpointName=endpoint_name,
+        ContentType='application/x-image',
+        Body=input_img_bytes,
+        Accept='application/json;verbose;n_predictions=20'
+    )
+    model_predictions = json.loads(response['Body'].read())
+    return model_predictions
+
+# --- Parse model response ---
+def parse_response(model_predictions):    
+    normalized_boxes = model_predictions['normalized_boxes']
+    classes = model_predictions['classes']
+    scores = model_predictions['scores']
+    labels = model_predictions['labels']
+    class_names = [labels[int(idx)] for idx in classes]
+    return normalized_boxes, class_names, scores
+
+# --- Load image and send to endpoint ---
+with open(local_img_filename, 'rb') as file:
+    input_img = file.read()
+
+best_results_per_input = parse_response(query_endpoint(input_img))
+
+# --- Visualize results ---
+colors = list(ImageColor.colormap.values())
+image_np = np.array(Image.open(local_img_filename))
+plt.figure(figsize=(20, 20))
+ax = plt.axes()
+ax.imshow(image_np)
+
+# Set a confidence threshold (e.g., 50%)
+confidence_threshold = 0.5
+
+normalized_boxes, class_names, confidences = best_results_per_input
+
+for idx in range(len(normalized_boxes)):
+    if confidences[idx] < confidence_threshold:
+        continue  # Skip low-confidence predictions
+
+    left, bot, right, top = normalized_boxes[idx]
+    x, w = [val * image_np.shape[1] for val in [left, right - left]]
+    y, h = [val * image_np.shape[0] for val in [bot, top - bot]]
+    color = colors[hash(class_names[idx]) % len(colors)]
+    
+    rect = patches.Rectangle((x, y), w, h, linewidth=3, edgecolor=color, facecolor='none')
+    ax.add_patch(rect)
+    
+    ax.text(x, y, f"{class_names[idx]} {confidences[idx]*100:.0f}%", bbox=dict(facecolor='white', alpha=0.5))
+
+plt.show()
